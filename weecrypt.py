@@ -118,6 +118,49 @@ def encryption_target(parsed, server_name):
         (channel == my_nick(server_name) and parsed["nick"] in gpg_identifiers)
 
 
+# Create a signal of a supplied type, containing the supplied content
+def create_signal(parsed, type, content):
+    def build_message(message):
+        return "PRIVMSG %s :%s" % (parsed["channel"], message)
+
+    # Create the basic signal
+    new_signal = "%s:%s:%s" % (type, content, type)
+    # Encode the newlines, as they are not allowed by the IRC protocol
+    new_signal = new_signal.replace("\n", "\\n", -1)
+
+    # The signal will probably have to be split into multiple chunks
+    messages = []
+
+    chunks = len(new_signal) / max_length
+    if len(new_signal) % max_length != 0:
+        chunks += 1
+
+    for i in range(chunks):
+        chunk = new_signal[max_length * i:max_length * (i + 1)]
+        messages.append(build_message(chunk))
+
+    return "\n".join(messages)
+
+
+# Check wether a buffered text is a complete signal
+def is_signal(text):
+    split = text.split(":")
+    if len(split) >= 3:
+        return split[0] == split[-1]
+    return False
+
+
+# Parse a valid signal into its type and content
+def parse_signal(signal):
+    split = signal.split(":")
+    type = split[0]
+    content = ":".join(split[1:-1])
+    # Put the newlines back
+    content = content.replace("\\n", "\n", -1)
+
+    return [type, content]
+
+
 # This method modifies how received IRC messages are displayed
 def in_modifier(data, modifier, server_name, irc_message):
     global buffers
@@ -134,32 +177,33 @@ def in_modifier(data, modifier, server_name, irc_message):
                (parsed["host"], parsed["channel"], message)
 
     # Start buffering
-    if message.startswith("crypt:"):
+    if buffer_id not in buffers:
         buffers[buffer_id] = ""
 
     # Currently buffering
     if buffer_id in buffers:
         buffers[buffer_id] += message
 
-        # Finished buffering: decrypt the message
-        if buffers[buffer_id].endswith(":crypt"):
-
-            # Turn the message into the original ASCII armor
-            split = buffers[buffer_id].split(":")
-            message = ":".join(split[1:-1])
-            # Put the newlines back, as GPG needs them
-            message = message.replace("\\n", "\n", -1)
-
+        # Finished buffering
+        if is_signal(buffers[buffer_id]):
+            type, content = parse_signal(buffers[buffer_id])
             del buffers[buffer_id]
 
-            result, success = decrypt(message)
-            if success:
-                return build_message(result)
+            # It's an encrypted message
+            if type == "crypt":
+                result, success = decrypt(content)
+                if success:
+                    return build_message(result)
 
+                else:
+                    for line in result.splitlines():
+                        weechat.prnt("", "Error: %s" % line)
+                    return build_message("Error: Decryption failed.")
+
+            # Report the error
             else:
-                for line in result.splitlines():
-                    weechat.prnt("", "Error: %s" % line)
-                return build_message("Error: Decryption failed.")
+                weechat.prnt("", "Error: Unknown type: %s" % type)
+                return ""
 
         # Don't print anything while buffering
         else:
@@ -194,23 +238,7 @@ def out_modifier(data, modifier, server_name, irc_message):
             return ""
 
     else:
-        new_message = "crypt:%s:crypt" % result
-        # Encode the newlines, as they are not allowed by the IRC protocol
-        new_message = new_message.replace("\n", "\\n", -1)
-
-        # The message has to be split into multiple messages, as ASCII armors
-        # are longer than the longest legal IRC message
-        messages = []
-
-        chunks = len(new_message) / max_length
-        if len(new_message) % max_length != 0:
-            chunks += 1
-
-        for i in range(chunks):
-            chunk = new_message[max_length * i:max_length * (i + 1)]
-            messages.append(build_message(chunk))
-
-        return "\n".join(messages)
+        return create_signal(parsed, "crypt", result)
 
 weechat.hook_modifier("irc_out_privmsg", "out_modifier", "")
 
