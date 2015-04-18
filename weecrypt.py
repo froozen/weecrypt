@@ -8,6 +8,10 @@ import json
 weechat.register("weecrypt", "shak-mar", "0.1", "None",
                  "asymmetric encryption for weechat using gpg", "", "")
 
+############################################################
+#  Global variables                                        #
+############################################################
+
 channel_whitelist = []
 gpg_identifiers = {}
 max_length = 300
@@ -26,13 +30,19 @@ else:
                  "Error: Cant find configuration file at: %s." % config_path)
 
 
-# Retrieve your own nick
+############################################################
+#  Helper functions                                        #
+############################################################
+
 def my_nick(server_name):
+    """Retrieve your own nick"""
+
     return weechat.info_get("irc_nick", server_name)
 
 
-# Returns all nicks in a channel, except your own
 def other_nicks(channel_name, server_name):
+    """Return all nicks in a channel, except your own"""
+
     nicks = []
     infolist = weechat.infolist_get("irc_nick", "",
                                     server_name + "," + channel_name)
@@ -46,8 +56,36 @@ def other_nicks(channel_name, server_name):
     return nicks
 
 
-# Encrypt a message for all possible recipients
+def parse_message(irc_message, server=None):
+    """Parse an IRC message into a useable format"""
+
+    # parse the message
+    message_dict = {"message": irc_message}
+    parsed = weechat.info_get_hashtable("irc_message_parse", message_dict)
+    if server:
+        parsed["server"] = server
+    # remove the channel part from PRIVMSG arguments
+    message = ":".join(parsed["arguments"].split(":")[1:])
+    return(parsed, message)
+
+
+def encryption_target(parsed, server_name):
+    """Message qualifies for en- or decryption"""
+
+    channel = parsed["channel"]
+    return\
+        channel in channel_whitelist or\
+        channel in gpg_identifiers or\
+        (channel == my_nick(server_name) and parsed["nick"] in gpg_identifiers)
+
+
+############################################################
+#  En- and Decryption functions                            #
+############################################################
+
 def encrypt(message, parsed):
+    """Encrypt a message for all possible recipients"""
+
     # Set the correct to_nicks
     to_nicks = []
     if parsed["channel"].startswith("#"):
@@ -56,7 +94,7 @@ def encrypt(message, parsed):
         to_nicks = [parsed["channel"]]
 
     # Assemble the command
-    command = ["gpg2", "--armor", "--encrypt","--batch","--no-tty"]
+    command = ["gpg2", "--armor", "--encrypt", "--batch", "--no-tty"]
     for nick in to_nicks:
         if nick in gpg_identifiers:
             command.extend(["--recipient", gpg_identifiers[nick]])
@@ -81,9 +119,11 @@ def encrypt(message, parsed):
     return ["", False]
 
 
-# Decrypt a received message
 def decrypt(message):
-    p = subprocess.Popen(["gpg2", "--armor", "--decrypt","--batch","--no-tty"],
+    """Decrypt a received message"""
+
+    p = subprocess.Popen(["gpg2", "--armor", "--decrypt", "--batch",
+                          "--no-tty"],
                          stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE)
 
@@ -97,29 +137,13 @@ def decrypt(message):
         return [err, False]
 
 
-# Parse an IRC message into a useable format
-def parse_message(irc_message, server=None):
-    # parse the message
-    message_dict = {"message": irc_message}
-    parsed = weechat.info_get_hashtable("irc_message_parse", message_dict)
-    if server:
-        parsed["server"] = server
-    # remove the channel part from PRIVMSG arguments
-    message = ":".join(parsed["arguments"].split(":")[1:])
-    return(parsed, message)
+############################################################
+#  Signal functions                                        #
+############################################################
 
-
-# Message qualifies for en- or decryption
-def encryption_target(parsed, server_name):
-    channel = parsed["channel"]
-    return\
-        channel in channel_whitelist or\
-        channel in gpg_identifiers or\
-        (channel == my_nick(server_name) and parsed["nick"] in gpg_identifiers)
-
-
-# Create a signal of a supplied type, containing the supplied content
 def create_signal(parsed, type, content):
+    """Create a signal of a supplied type, containing the supplied content"""
+
     def build_message(message):
         return "PRIVMSG %s :%s" % (parsed["channel"], message)
 
@@ -142,16 +166,18 @@ def create_signal(parsed, type, content):
     return "\n".join(messages)
 
 
-# Check wether a buffered text is a complete signal
 def is_signal(text):
+    """Check wether a buffered text is a complete signal"""
+
     split = text.split(":")
     if len(split) >= 3:
         return split[0] == split[-1]
     return False
 
 
-# Parse a valid signal into its type and content
 def parse_signal(signal):
+    """Parse a valid signal into its type and content"""
+
     split = signal.split(":")
     type = split[0]
     content = ":".join(split[1:-1])
@@ -161,8 +187,13 @@ def parse_signal(signal):
     return [type, content]
 
 
-# This method modifies how received IRC messages are displayed
+############################################################
+#  Weechat callbacks                                       #
+############################################################
+
 def in_modifier(data, modifier, server_name, irc_message):
+    """Modify how received IRC messages are displayed"""
+
     global buffers
 
     parsed, message = parse_message(irc_message, server=server_name)
@@ -214,8 +245,9 @@ def in_modifier(data, modifier, server_name, irc_message):
 weechat.hook_modifier("irc_in2_privmsg", "in_modifier", "")
 
 
-# This method modifies how IRC messages are sent
 def out_modifier(data, modifier, server_name, irc_message):
+    """Modifie how IRC messages are sent"""
+
     def build_message(message):
         return "PRIVMSG %s :%s" % (parsed["channel"], message)
 
@@ -243,8 +275,13 @@ def out_modifier(data, modifier, server_name, irc_message):
 weechat.hook_modifier("irc_out_privmsg", "out_modifier", "")
 
 
-# Send an unencrypted message
+############################################################
+#  Weechat commands                                        #
+############################################################
+
 def unencrypted_cmd(data, buffer, args):
+    """Send an unencrypted message"""
+
     weechat.command(buffer, "<unencrypted>: %s" % "".join(args))
     return weechat.WEECHAT_RC_OK
 
