@@ -79,6 +79,30 @@ def encryption_target(parsed, server_name):
         (channel == my_nick(server_name) and parsed["nick"] in gpg_identifiers)
 
 
+def run_cmd(command, stdin=None):
+    """Run a command and return wether it failed and its output"""
+
+    # Run the command
+    p = subprocess.Popen(command,
+                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.PIPE)
+
+    encoded, err = [None, None]
+    # Pipe stdin into the running command, if present
+    if stdin:
+        stdin = unicode(stdin, "utf-8")
+        encoded, err = p.communicate(stdin.encode("utf-8"))
+    else:
+        encoded, err = p.communicate()
+
+    if p.returncode == 0:
+        encoded = encoded.decode("utf-8").strip()
+        return [encoded, True]
+
+    else:
+        err = err.decode().strip()
+        return [err, False]
+
 ############################################################
 #  En- and Decryption functions                            #
 ############################################################
@@ -101,20 +125,7 @@ def gpg_encrypt(message, parsed):
 
     # Only encrypt if there are receipients
     if "--recipient" in command:
-        # Run the command and collect its output
-        p = subprocess.Popen(command,
-                             stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                             stderr=subprocess.PIPE)
-
-        encoded, err = p.communicate(message)
-
-        if p.returncode == 0:
-            encoded = encoded.decode().strip()
-            return [encoded, True]
-
-        else:
-            err = err.decode().strip()
-            return [err, False]
+        return run_cmd(command, stdin=message)
 
     return ["", False]
 
@@ -122,19 +133,10 @@ def gpg_encrypt(message, parsed):
 def gpg_decrypt(message):
     """Decrypt a received message"""
 
-    p = subprocess.Popen(["gpg2", "--armor", "--decrypt", "--batch",
-                          "--no-tty"],
-                         stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE)
+    return run_cmd(["gpg2", "--armor", "--decrypt", "--batch", "--no-tty"],
+                   stdin=message)
 
-    decoded, err = p.communicate(message.encode("utf-8"))
 
-    if p.returncode == 0:
-        decoded = decoded.decode("utf-8").strip()
-        return [decoded, True]
-    else:
-        err = err.decode().strip()
-        return [err, False]
 
 
 ############################################################
