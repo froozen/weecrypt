@@ -83,7 +83,7 @@ def encryption_target(parsed, server_name):
 #  En- and Decryption functions                            #
 ############################################################
 
-def encrypt(message, parsed):
+def gpg_encrypt(message, parsed):
     """Encrypt a message for all possible recipients"""
 
     # Set the correct to_nicks
@@ -119,7 +119,7 @@ def encrypt(message, parsed):
     return ["", False]
 
 
-def decrypt(message):
+def gpg_decrypt(message):
     """Decrypt a received message"""
 
     p = subprocess.Popen(["gpg2", "--armor", "--decrypt", "--batch",
@@ -222,7 +222,7 @@ def in_modifier(data, modifier, server_name, irc_message):
 
             # It's an encrypted message
             if type == "crypt":
-                result, success = decrypt(content)
+                result, success = gpg_decrypt(content)
                 if success:
                     return build_message(result)
 
@@ -262,7 +262,7 @@ def out_modifier(data, modifier, server_name, irc_message):
         return irc_message
 
     # Try to encrypt the message
-    result, success = encrypt(message, parsed)
+    result, success = gpg_encrypt(message, parsed)
     if not success:
         # Print the error
         for line in result.splitlines():
